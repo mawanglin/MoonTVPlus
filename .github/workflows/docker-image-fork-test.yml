@@ -1,0 +1,136 @@
+name: Build Fork Test Image
+
+# 用于在 fork 仓库构建测试镜像并推到 fork 自己的 GHCR namespace。
+# 不影响上游 mtvpls 的镜像；仅用于自测 / NAS 实地验收。
+# 触发方式：仓库 Actions 页面手动 → "Run workflow"。
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: '镜像 tag（如 fix-dns-test）'
+        required: true
+        default: 'fix-dns-test'
+        type: string
+      platforms:
+        description: '构建平台'
+        required: true
+        default: 'linux/amd64,linux/arm64'
+        type: choice
+        options:
+          - linux/amd64
+          - linux/arm64
+          - 'linux/amd64,linux/arm64'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            os: ubuntu-latest
+          - platform: linux/arm64
+            os: ubuntu-24.04-arm
+    runs-on: ${{ matrix.os }}
+    # 只在 inputs.platforms 包含当前 matrix.platform 时才跑这个 job
+    if: contains(inputs.platforms, matrix.platform)
+
+    steps:
+      - name: Prepare platform name
+        run: |
+          echo "PLATFORM_NAME=${{ matrix.platform }}" | sed 's|/|-|g' >> $GITHUB_ENV
+
+      - name: Checkout source code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Set lowercase repository owner
+        id: lc
+        run: echo "owner=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: ${{ matrix.platform }}
+          outputs: |
+            type=image,name=ghcr.io/${{ steps.lc.outputs.owner }}/moontvplus,push-by-digest=true,name-canonical=true,push=true
+
+      - name: Export digest
+        run: |
+          mkdir -p /tmp/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
+
+      - name: Upload digest
+        uses: actions/upload-artifact@v4
+        with:
+          name: digests-${{ env.PLATFORM_NAME }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  merge:
+    runs-on: ubuntu-latest
+    needs:
+      - build
+    steps:
+      - name: Download digests
+        uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digests-*
+          merge-multiple: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Set lowercase repository owner
+        id: lc
+        run: echo "owner=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create manifest list and push
+        working-directory: /tmp/digests
+        run: |
+          docker buildx imagetools create \
+            -t ghcr.io/${{ steps.lc.outputs.owner }}/moontvplus:${{ inputs.tag }} \
+            $(printf 'ghcr.io/${{ steps.lc.outputs.owner }}/moontvplus@sha256:%s ' *)
+
+      - name: Print final image
+        run: |
+          echo "✅ Image pushed: ghcr.io/${{ steps.lc.outputs.owner }}/moontvplus:${{ inputs.tag }}"
+          echo ""
+          echo "NAS 上拉取方式："
+          echo "  # 如果包是 private（默认）："
+          echo "  echo <GHCR_PAT> | docker login ghcr.io -u ${{ steps.lc.outputs.owner }} --password-stdin"
+          echo "  docker pull ghcr.io/${{ steps.lc.outputs.owner }}/moontvplus:${{ inputs.tag }}"
+          echo ""
+          echo "  # 或者先在 https://github.com/users/${{ steps.lc.outputs.owner }}/packages/container/moontvplus/settings"
+          echo "  # 把 Visibility 改成 Public，然后免登录直接 docker pull"
