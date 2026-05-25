@@ -12,15 +12,6 @@ on:
         required: true
         default: 'fix-dns-test'
         type: string
-      platforms:
-        description: '构建平台'
-        required: true
-        default: 'linux/amd64,linux/arm64'
-        type: choice
-        options:
-          - linux/amd64
-          - linux/arm64
-          - 'linux/amd64,linux/arm64'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -41,8 +32,6 @@ jobs:
           - platform: linux/arm64
             os: ubuntu-24.04-arm
     runs-on: ${{ matrix.os }}
-    # 只在 inputs.platforms 包含当前 matrix.platform 时才跑这个 job
-    if: contains(inputs.platforms, matrix.platform)
 
     steps:
       - name: Prepare platform name
