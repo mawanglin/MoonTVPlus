@@ -1,3 +1,7 @@
+## [220.0.1] - 2026-05-25
+### Fixed
+- 修复部分 NAS 系统（飞牛 fnOS、群晖等）Docker 内嵌 DNS 对 IPv6 响应异常导致 redis/kvrocks 客户端持续报 `EAI_AGAIN` 无法连接的问题。redis 客户端 socket 现在默认强制 IPv4，可通过 `REDIS_FAMILY` 环境变量覆盖（0/4/6）。
+
 ## [220.0.0] - 2026-05-14
 ### Added
 - 增加视频源过多提示
