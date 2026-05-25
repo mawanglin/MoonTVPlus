@@ -88,10 +88,16 @@ export function createRedisClient(config: RedisConnectionConfig, globalSymbol: s
       throw new Error(`${config.clientName}_URL env variable not set`);
     }
 
+    // IP 协议族（默认 4，强制 IPv4 解析）
+    // 解决部分 NAS（飞牛 fnOS、群晖等）Docker 内嵌 DNS 对 IPv6 (AAAA)
+    // 查询响应异常导致 EAI_AGAIN 的问题，可通过 REDIS_FAMILY 覆盖
+    const family = parseInt(process.env.REDIS_FAMILY ?? '4', 10);
+
     // 创建客户端配置
     const clientConfig: any = {
       url: config.url,
       socket: {
+        family,
         // 重连策略：指数退避，最大30秒
         reconnectStrategy: (retries: number) => {
           console.log(`${config.clientName} reconnection attempt ${retries + 1}`);
