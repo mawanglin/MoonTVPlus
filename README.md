@@ -560,6 +560,36 @@ NEXT_PUBLIC_VOICE_CHAT_STRATEGY 选项解释：
 - 项目开发者不对用户的使用行为承担任何法律责任
 - 本项目不在中国大陆地区提供服务。如有该项目在向中国大陆地区提供服务，属个人行为。在该地区使用所产生的法律风险及责任，属于用户个人行为，与本项目无关，须自行承担全部责任。特此声明
 
+## 故障排查
+
+### 容器内出现 `Kvrocks client error: ... EAI_AGAIN`（或 redis 同类错误）
+
+**现象**：core 容器日志反复打印
+
+    Kvrocks client error: Error: getaddrinfo EAI_AGAIN moontvplus-kvrocks
+    Kvrocks reconnection attempt N
+
+但 kvrocks/redis 容器本身正常监听端口。
+
+**原因**：部分 NAS 系统（飞牛 fnOS、群晖 DSM 等）的 Docker 内嵌 DNS (`127.0.0.11`) 对 IPv6 (AAAA) 查询响应异常。Node.js 17+ 默认 verbatim 解析顺序会优先尝试 IPv6，触发超时。
+
+**默认已规避**：v220.0.1 起，redis 客户端默认强制 IPv4（`REDIS_FAMILY=4`）。如仍出问题，请确认未覆盖此变量。
+
+**进一步排查**：
+
+1. 确认两个容器在同一 Docker 网络：
+
+       docker inspect <core容器> -f '{{json .NetworkSettings.Networks}}'
+
+2. 用 IP 直连绕过 DNS 验证 L3 连通性：
+
+       KVIP=$(docker inspect <kvrocks容器> -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}')
+       docker exec <core容器> node -e "require('net').createConnection(6666,'$KVIP').on('connect',()=>console.log('OK'))"
+
+   输出 `OK` 表示网络层通，问题就是 DNS。
+
+3. 终极绕开 DNS：在 compose 的 core 服务里加 `extra_hosts`，把服务名映射到容器 IP。
+
 ## License
 
 [MIT](LICENSE) © 2025 MoonTV & Contributors
