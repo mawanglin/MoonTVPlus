@@ -413,6 +413,7 @@ dockge/komodo 等 docker compose UI 也有自动更新功能
 | NEXT_PUBLIC_STORAGE_TYPE                 | 播放记录/收藏的存储方式                                      | redis、kvrocks、upstash、d1 | 无默认，必填字段                                             |
 | KVROCKS_URL                              | kvrocks 连接 url                                             | 连接 url                    | 空                                                           |
 | REDIS_URL                                | redis 连接 url                                               | 连接 url                    | 空                                                           |
+| REDIS_FAMILY                             | redis/kvrocks 客户端的 IP 协议族（4=IPv4，6=IPv6，0=自动）。某些 NAS 系统 Docker 内嵌 DNS 对 IPv6 响应异常会报 EAI_AGAIN，保持默认 4 即可 | 0 / 4 / 6                   | 4                                                            |
 | UPSTASH_URL                              | upstash redis 连接 url                                       | 连接 url                    | 空                                                           |
 | UPSTASH_TOKEN                            | upstash redis 连接 token                                     | 连接 token                  | 空                                                           |
 | NEXT_PUBLIC_SEARCH_MAX_PAGE              | 搜索接口可拉取的最大页数                                     | 1-50                        | 5                                                            |
