@@ -128,12 +128,16 @@ check "start 返回失败" [ "$rc" != 0 ]
 check "原因写进 TRIM_TEMP_LOGFILE" grep -q "应用目录不可写" "$TEMPLOG"
 chmod u+w "${T}/target/server/public"
 
-step "8. 升级（upgrade_init / upgrade_callback）"
+step "8. 升级（飞牛的真实顺序：upgrade_init → install_callback（带安装时的向导值）→ upgrade_callback）"
 run main start >/dev/null
 DB_INODE="$(stat -c %i "${T}/var/data/moontv.db")"
 run upgrade_init; check "upgrade_init 停止了服务" [ "$(run main status; echo $?)" = 3 ]
 mkdir -p "${T}/var/server/node_modules" "${T}/var/server.old"   # 模拟 227.0.1.1 留下的解压拷贝
 chmod 777 "${T}/var/data"; touch "${T}/var/data/loose"; chmod 666 "${T}/var/data/loose"
+wizard_port="$PORT" wizard_username=admin wizard_password='pa$$w0rd"x' run install_callback
+check "升级中的 install_callback 成功" [ $? = 0 ]
+check "升级不会把应用设置里改过的密码冲回安装时的值" [ "$(settings MOONTV_PASSWORD)" = newpass99 ]
+check "升级保留 cron 密码" [ "$(settings MOONTV_CRON_PASSWORD)" = "$CRON1" ]
 run upgrade_callback; check "upgrade_callback 成功" [ $? = 0 ]
 check "清掉了旧版的 var/server 拷贝" test ! -e "${T}/var/server" -a ! -e "${T}/var/server.old"
 check "升级时收紧权限：目录 750" [ "$(stat -c %a "${T}/var/data")" = 750 ]
@@ -144,11 +148,19 @@ run main start; check "升级后能启动" [ $? = 0 ]
 check "升级后旧账号数据仍可登录" [ "$(login admin newpass99)" = True ]
 run main stop >/dev/null
 
-step "9. 重装（保留 cron 密码，向导值覆盖）"
+step "9. 卸载（保留数据）后重装：向导值覆盖账号，cron 密码保留"
+run uninstall_init >/dev/null
+wizard_keep_data=true "${CMD}/uninstall_callback"
+check "保留数据卸载时写了重装标记" [ -f "${T}/var/.reinstall" ]
 wizard_port="$PORT" wizard_username=boss wizard_password=another66 run install_callback
 check "重装成功" [ $? = 0 ]
 check "用户名被向导值覆盖" [ "$(settings MOONTV_USERNAME)" = boss ]
+check "密码被向导值覆盖" [ "$(settings MOONTV_PASSWORD)" = another66 ]
 check "cron 密码保留" [ "$(settings MOONTV_CRON_PASSWORD)" = "$CRON1" ]
+check "重装后清掉了重装标记" [ ! -e "${T}/var/.reinstall" ]
+run main start; check "重装后能启动" [ $? = 0 ]
+check "重装后新账号能登录" [ "$(login boss another66)" = True ]
+run main stop >/dev/null
 
 step "10. 卸载"
 run main start >/dev/null
@@ -160,6 +172,7 @@ check "保留数据：配置还在" [ -f "${T}/etc/settings.env" ]
 wizard_keep_data=false "${CMD}/uninstall_callback"
 check "不保留：数据库已删" [ ! -e "${T}/var/data" ]
 check "不保留：配置已删" [ ! -e "${T}/etc/settings.env" ]
+check "不保留：重装标记已删" [ ! -e "${T}/var/.reinstall" ]
 mkdir -p "${WORK}/not-ours/server" "${WORK}/not-ours/data"
 TRIM_PKGVAR="${WORK}/not-ours" wizard_keep_data=false "${CMD}/uninstall_callback"
 check "路径不含 moontvplus 时拒绝删除" test -d "${WORK}/not-ours/server" -a -d "${WORK}/not-ours/data"

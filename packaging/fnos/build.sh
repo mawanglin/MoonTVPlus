@@ -12,7 +12,7 @@
 # 依赖：bash git curl python3 tar gzip file，pnpm（与 package.json 的 packageManager 一致）。
 #       patchelf、fnpack 自动下载到 packaging/fnos/.cache/tools。构建机须为 x86_64（fnpack 只有 amd64 版）。
 # 应用源码取自 git HEAD（git archive），未提交的改动不会进包。
-# 产物：packaging/fnos/dist/moontvplus_<版本>_<x86|arm>.fpk，每个架构只保留最新 2 个版本。
+# 产物：<项目根目录>/dist/moontvplus_<版本>_<x86|arm>.fpk，每个架构只保留最新 2 个版本。
 
 set -euo pipefail
 
@@ -21,7 +21,7 @@ REPO="$(git -C "$ROOT" rev-parse --show-toplevel)"
 CACHE="${ROOT}/.cache"
 TOOLS="${CACHE}/tools"
 BUILD="${ROOT}/build"
-DIST="${ROOT}/dist"
+DIST="${REPO}/dist"        # 产物放在项目根目录的 dist/，方便找
 TEMPLATE="${ROOT}/template"
 
 # ---- 版本固定（升级时改这里，并更新 sha256）----
@@ -99,6 +99,8 @@ fi
 mv "${REV_FILE}.tmp" "$REV_FILE"
 VERSION="${UPSTREAM_VERSION}.${REV}"
 COMMIT="$(git -C "$REPO" rev-parse --short HEAD)"
+# 应用代码的版本键：最后一次改动应用代码（打包目录与 .gitignore 除外）的提交；只改打包时可以复用 next build
+APP_KEY="$(git -C "$REPO" log -1 --format=%h HEAD -- . ':!packaging' ':!.gitignore')"
 info "包版本 ${VERSION}（上游 ${UPSTREAM_VERSION}，对应 tag v${UPSTREAM_VERSION}-cob.${REV}，提交 ${COMMIT}）"
 git -C "$REPO" diff --quiet HEAD -- . ':!packaging/fnos' 2>/dev/null \
   || info "注意：工作区有未提交的应用代码改动，它们不会进包（只打包 HEAD）"
@@ -106,8 +108,8 @@ git -C "$REPO" diff --quiet HEAD -- . ':!packaging/fnos' 2>/dev/null \
 # ---------------------------------------------------------------- 应用构建（两个架构共用）
 
 SRC="${BUILD}/src"
-if [ "$REUSE_APP" = 1 ] && [ -f "${SRC}/.next/standalone/server.js" ] && [ "$(cat "${SRC}/.fpk-commit" 2>/dev/null)" = "$COMMIT" ]; then
-  info "复用已构建的应用（${COMMIT}）"
+if [ "$REUSE_APP" = 1 ] && [ -f "${SRC}/.next/standalone/server.js" ] && [ "$(cat "${SRC}/.fpk-commit" 2>/dev/null)" = "$APP_KEY" ]; then
+  info "复用已构建的应用（应用代码 ${APP_KEY}）"
 else
   info "导出源码 ${COMMIT}"
   rm -rf "$SRC"
@@ -120,7 +122,7 @@ else
   info "next build（约 3–5 分钟）"
   (cd "$SRC" && DOCKER_ENV=true NEXT_TELEMETRY_DISABLED=1 pnpm run build) > "${BUILD}/next-build.log" 2>&1 \
     || { tail -n 40 "${BUILD}/next-build.log"; die "next build 失败"; }
-  echo "$COMMIT" > "${SRC}/.fpk-commit"
+  echo "$APP_KEY" > "${SRC}/.fpk-commit"
 fi
 
 changelog="$(awk '/^## /{n++; next} n==1 && /^- /{sub(/^- /, ""); printf "%s ", $0}' "${ROOT}/CHANGELOG.md" 2>/dev/null | sed 's/ *$//')"
@@ -225,7 +227,7 @@ for arch in $ARCHES; do
   sed -e "s|@VERSION@|${VERSION}|" -e "s|@PLATFORM@|${arch}|" -e "s|@CHANGELOG@|${changelog//|/\\|}|" \
     "${TEMPLATE}/manifest" > "${pkg}/manifest"
   {
-    echo "MoonTVPlus ${UPSTREAM_VERSION}（提交 ${COMMIT}），fpk ${VERSION}，${arch}"
+    echo "MoonTVPlus ${UPSTREAM_VERSION}（提交 ${COMMIT}，应用代码 ${APP_KEY}），fpk ${VERSION}，${arch}"
     echo "Node.js ${NODE_VERSION}，better-sqlite3 ${BSQL_VERSION}（node-v${NODE_ABI}-linux-${na}）"
     cat "${work}/debs.txt"
   } > "${pkg}/app/BUILD-INFO.txt"
@@ -277,7 +279,7 @@ for p in ['config/privilege', 'config/resource', 'wizard/install', 'wizard/confi
   out="$(find "$work" -maxdepth 1 -name '*.fpk' | head -n1)"
   [ -n "$out" ] || { cat "${work}/fnpack.log"; die "未找到 fnpack 输出"; }
   mv -f "$out" "${DIST}/moontvplus_${VERSION}_${arch}.fpk"
-  info "产物 dist/moontvplus_${VERSION}_${arch}.fpk（$(( $(stat -c %s "${DIST}/moontvplus_${VERSION}_${arch}.fpk") / 1048576 ))MB）"
+  info "产物 ${DIST}/moontvplus_${VERSION}_${arch}.fpk（$(( $(stat -c %s "${DIST}/moontvplus_${VERSION}_${arch}.fpk") / 1048576 ))MB）"
 
   # 每个架构只保留最新 2 个版本
   find "$DIST" -maxdepth 1 -name "moontvplus_*_${arch}.fpk" -printf '%f\n' | sort -V | head -n -2 | while read -r old; do

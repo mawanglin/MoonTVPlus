@@ -1,7 +1,29 @@
 #!/bin/bash
 # 安装后：保存配置、建好数据目录并收紧权限。
-# 重装时保留旧配置里向导没有收集的值（cron 密码），向导里填的值覆盖旧值。
+#
+# 飞牛升级时也会调用 install_callback，并带上当初安装向导的值（真机 2026-11-12 确认：
+# 升级日志里先出现 installed 再出现 upgraded）。所以要区分三种情况：
+#   1. 全新安装（没有配置文件）            → 用向导值，生成随机 cron 密码
+#   2. 升级（有配置文件、没有重装标记）    → 保留现有配置，不用向导值覆盖
+#                                            （否则「应用设置」里改过的账号密码会被冲回安装时的值）
+#   3. 卸载时保留数据后重装（有重装标记）  → 用向导值覆盖账号与端口，保留 cron 密码
+# 重装标记由 uninstall_callback 在保留数据时写入 TRIM_PKGVAR。
 . "$(dirname "$0")/functions"
+
+REINSTALL_MARK="${VAR_DIR}/.reinstall"
+
+finish() {
+  prepare_dirs || exit 1
+  remove_legacy_server
+  check_server || exit 1
+  exit 0
+}
+
+if [ -f "${SETTINGS_FILE}" ] && [ ! -f "${REINSTALL_MARK}" ]; then
+  load_settings || exit 1
+  log "install_callback during upgrade ${TRIM_APPVER:-}: keep existing settings (port=${MOONTV_PORT})"
+  finish
+fi
 
 port="${wizard_port:-}"
 username="${wizard_username:-}"
@@ -23,8 +45,6 @@ fi
 
 save_settings "${port}" "${username}" "${password}" "${old_cron:-$(random_hex)}" \
   || { user_error "无法写入配置文件 ${SETTINGS_FILE}"; exit 1; }
-prepare_dirs || exit 1
-remove_legacy_server
-check_server || exit 1
+rm -f "${REINSTALL_MARK}"
 log "installed ${TRIM_APPVER:-} port=${port}"
-exit 0
+finish

@@ -15,6 +15,9 @@ remove_legacy_server
 if [ "${wizard_keep_data:-true}" != "true" ]; then
   safe_rm "${DATA_DIR}"
   safe_rm "${HOME_DIR}"
-  rm -f "${SETTINGS_FILE}"
+  rm -f "${SETTINGS_FILE}" "${VAR_DIR}/.reinstall"
+else
+  # 告诉下一次 install_callback：这是卸载后重装，要用向导里新填的账号（见 install_callback）
+  mkdir -p "${VAR_DIR}" && touch "${VAR_DIR}/.reinstall"
 fi
 exit 0

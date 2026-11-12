@@ -35,21 +35,21 @@ x86 与 arm 各出一个包。这个目录只在 fork 的 `fnos-fpk` 分支上�
 ## 构建
 
 ```bash
-packaging/fnos/build.sh                # x86 + arm，产物在 packaging/fnos/dist/
+packaging/fnos/build.sh                # x86 + arm，产物在项目根目录的 dist/
 packaging/fnos/build.sh --arch x86     # 只构建 x86
 packaging/fnos/build.sh --reuse-app    # 复用上次的 next build，只重新组装打包
 ```
 
 - 构建机：x86_64 Linux，需要 bash、git、curl、python3、tar、gzip、file、pnpm；patchelf、fnpack 自动下载（sha256 固定在 `build.sh` 里）
 - 应用源码取 **git HEAD**（`git archive`），未提交的改动不会进包
-- 版本：fpk 是 `<上游版本>.<N>`（如 `227.0.1.1`），对应 git tag `v<上游版本>-cob.<N>`；N 记录在 `dist/.build_rev`
-- `dist/` 里每个架构只保留最新 2 个版本
+- 版本：fpk 是 `<上游版本>.<N>`（如 `227.0.1.1`），对应 git tag `v<上游版本>-cob.<N>`；N 记录在项目根目录的 `dist/.build_rev`
+- 项目根目录的 `dist/`（已加入 `.gitignore`）里每个架构只保留最新 2 个版本
 - 升级 Node 或 better-sqlite3 时改 `build.sh` 顶部的版本和 sha256；脚本会核对 better-sqlite3 版本与 `pnpm-lock.yaml` 一致
 
 ## 测试
 
 ```bash
-packaging/fnos/test/simulate.sh packaging/fnos/dist/moontvplus_<版本>_x86.fpk
+packaging/fnos/test/simulate.sh dist/moontvplus_<版本>_x86.fpk
 ```
 
 在普通 x86 Linux 上用假的 `TRIM_*` 环境跑一遍全部生命周期脚本，包括失败路径：端口占用、进程启动即退出、应用目录不可写、改账号后重启、权限收紧、升级时清理旧拷贝且不动数据库、重装时保留 cron 密码、卸载时是否保留数据，以及删除路径的保护。arm 包在构建时只做静态检查（所有原生文件的架构），要在 arm 设备上实测。

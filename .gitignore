@@ -75,3 +75,6 @@ scripts/test
 
 .agents/
 skills-lock.json
+
+# 飞牛 fpk 打包产物（packaging/fnos/build.sh）
+/dist/
