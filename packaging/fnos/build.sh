@@ -132,7 +132,7 @@ for arch in $ARCHES; do
   na="$(node_arch "$arch")"; da="$(deb_arch "$arch")"; fa="$(file_arch "$arch")"
   work="${BUILD}/${arch}"
   pkg="${work}/pkg"
-  srv="${work}/server"
+  srv="${pkg}/app/server"   # 应用本体直接放进包里，安装后在 TRIM_APPDEST/server 运行
   info "==== ${arch}"
   rm -rf "$work"
   mkdir -p "$pkg/app/runtime/node/bin" "$pkg/app/runtime/node/lib" "$srv" "${work}/x"
@@ -201,9 +201,7 @@ for arch in $ARCHES; do
     [ -e "${srv}/${f}" ] || die "server 缺少 ${f}"
   done
 
-  info "打包 server.tar.gz（$(du -sh --apparent-size "$srv" | cut -f1)）"
-  tar -czf "${pkg}/app/server.tar.gz" --owner=0 --group=0 --numeric-owner -C "$srv" .
-  echo "${VERSION}+$(sha256sum "${pkg}/app/server.tar.gz" | cut -c1-12)" > "${pkg}/app/server.version"
+  info "应用本体 $(du -sh --apparent-size "$srv" | cut -f1)，$(find "$srv" -type f | wc -l) 个文件"
 
   # ---- Node.js 运行时 + libstdc++ / libgcc_s（Debian bookworm，与飞牛系统同源）
   node_txz="${CACHE}/dl/node-v${NODE_VERSION}-linux-${na}.tar.xz"
@@ -238,7 +236,7 @@ for arch in $ARCHES; do
 
   # ---- 打包前自检
   for f in manifest config/privilege config/resource ICON.PNG ICON_256.PNG wizard/install wizard/config wizard/uninstall \
-           app/ui/config app/ui/images/icon_64.png app/ui/images/icon_256.png app/server.tar.gz app/server.version \
+           app/ui/config app/ui/images/icon_64.png app/ui/images/icon_256.png app/server/start.js app/server/public app/server/.next \
            app/runtime/node/bin/node app/runtime/node/lib/libstdc++.so.6 app/runtime/node/lib/libgcc_s.so.1; do
     [ -e "${pkg}/${f}" ] || die "缺少 ${f}"
   done

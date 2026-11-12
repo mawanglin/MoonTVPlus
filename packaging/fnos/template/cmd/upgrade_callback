@@ -1,8 +1,9 @@
 #!/bin/bash
-# 升级后：配置沿用，按新版本重新解压应用本体（数据库不在 server 目录里，不受影响）。
+# 升级后：配置与数据库沿用；清掉 227.0.1.1 留在 TRIM_PKGVAR/server 的旧拷贝，收紧权限。
 . "$(dirname "$0")/functions"
 load_settings || exit 1
-mkdir -p "${DATA_DIR}" "${LOG_DIR}" "${HOME_DIR}"
-ensure_server || exit 1
+prepare_dirs || exit 1
+remove_legacy_server
+check_server || exit 1
 log "upgraded to ${TRIM_APPVER:-}"
 exit 0

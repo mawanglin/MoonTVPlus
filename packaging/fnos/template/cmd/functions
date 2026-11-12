@@ -3,14 +3,17 @@
 # 只依赖飞牛注入的 TRIM_* 变量。
 #
 # 目录约定：
-#   TRIM_APPDEST（只读）  runtime/node   内置 Node.js 及其 libstdc++ / libgcc_s
-#                         server.tar.gz  应用本体（Next standalone + 生产依赖）
-#                         server.version 应用本体的版本戳
-#   TRIM_PKGETC           settings.env   端口、站长账号、cron 密码（600）
-#   TRIM_PKGVAR           server/        解压后的应用本体（运行时会写 public/manifest.json 与 .next/cache，
-#                                        所以不能直接在 TRIM_APPDEST 里运行）
-#                         data/          SQLite 数据库
-#                         logs/          日志与 pid
+#   TRIM_APPDEST  runtime/node   内置 Node.js 及其 libstdc++ / libgcc_s
+#                 server/        应用本体（Next standalone + 生产依赖），直接在这里运行。
+#                                飞牛把 TRIM_APPDEST 的属主设为包用户（run-as package），运行时
+#                                写 public/manifest.json 与 .next/cache 没有问题（2026-11-12 真机确认）
+#   TRIM_PKGETC   settings.env   端口、站长账号、cron 密码（600）
+#   TRIM_PKGVAR   data/          SQLite 数据库
+#                 logs/          日志与 pid
+#                 home/          进程的 HOME
+#
+# 飞牛的 ZFS（trimacl 挂载）新建文件不受 umask 约束（真机上 umask 0027 仍建出 666 的文件），
+# 所以每次安装、升级、启动时显式收紧权限：目录 750、文件 640。
 
 export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 umask 027
@@ -20,9 +23,7 @@ VAR_DIR="${TRIM_PKGVAR:-/var/apps/${TRIM_APPNAME:-moontvplus}/var}"
 ETC_DIR="${TRIM_PKGETC:-${VAR_DIR}/etc}"
 SETTINGS_FILE="${ETC_DIR}/settings.env"
 NODE="${APP_DIR}/runtime/node/bin/node"
-SERVER_TGZ="${APP_DIR}/server.tar.gz"
-SERVER_STAMP="${APP_DIR}/server.version"
-SERVER_DIR="${VAR_DIR}/server"
+SERVER_DIR="${APP_DIR}/server"
 DATA_DIR="${VAR_DIR}/data"
 LOG_DIR="${VAR_DIR}/logs"
 LOG_FILE="${LOG_DIR}/moontvplus.log"
@@ -51,6 +52,32 @@ port_open() {
   (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null
 }
 
+# 建好数据目录并收紧权限（幂等）。数据库里有用户与播放记录，日志里有请求地址，只给包用户。
+prepare_dirs() {
+  local d
+  mkdir -p "${DATA_DIR}" "${LOG_DIR}" "${HOME_DIR}" || { user_error "无法创建数据目录 ${VAR_DIR}"; return 1; }
+  for d in "${DATA_DIR}" "${LOG_DIR}" "${HOME_DIR}"; do
+    find "$d" -type d -exec chmod 750 {} + 2>/dev/null
+    find "$d" -type f -exec chmod 640 {} + 2>/dev/null
+  done
+  [ -f "${SETTINGS_FILE}" ] && chmod 600 "${SETTINGS_FILE}"
+  return 0
+}
+
+# 227.0.1.1 把应用本体解压到 TRIM_PKGVAR/server 运行；改为直接在 TRIM_APPDEST 运行后清掉这份旧拷贝。
+# 只删本应用自己的目录（路径里必须带 moontvplus），防止变量异常时误删。
+remove_legacy_server() {
+  local d
+  for d in "${VAR_DIR}/server" "${VAR_DIR}/server.new" "${VAR_DIR}/server.old"; do
+    [ -e "$d" ] || continue
+    case "$d" in
+      */moontvplus/*) rm -rf --one-file-system "$d" && log "removed legacy ${d}" ;;
+      *) log "refuse to remove unexpected path: $d" ;;
+    esac
+  done
+  return 0
+}
+
 # 读取配置。先清空同名变量，避免沿用调用方环境里的旧值。
 load_settings() {
   unset MOONTV_PORT MOONTV_USERNAME MOONTV_PASSWORD MOONTV_CRON_PASSWORD
@@ -76,30 +103,16 @@ random_hex() {
   od -An -N16 -tx1 /dev/urandom | tr -d ' \n'
 }
 
-# 把只读的 server.tar.gz 解压到 TRIM_PKGVAR/server。版本戳一致时跳过。
-# 先解压到临时目录再整体替换，解压失败不会破坏正在用的版本。
-ensure_server() {
-  local want have tmp="${VAR_DIR}/server.new" old="${VAR_DIR}/server.old"
-  want="$(cat "${SERVER_STAMP}" 2>/dev/null)"
-  if [ -z "${want}" ] || [ ! -f "${SERVER_TGZ}" ]; then
-    user_error "应用文件不完整（缺少 server.tar.gz），请重新安装。"
+# 应用本体是否完整、运行时要写的位置是否可写
+check_server() {
+  if [ ! -f "${SERVER_DIR}/start.js" ] || [ ! -x "${NODE}" ]; then
+    user_error "应用文件不完整（缺少 server/start.js 或内置 Node.js），请重新安装。"
     return 1
   fi
-  have="$(cat "${SERVER_DIR}/.fpk-version" 2>/dev/null)"
-  [ "${have}" = "${want}" ] && [ -f "${SERVER_DIR}/start.js" ] && return 0
-
-  log "extracting server ${want} (was: ${have:-none})"
-  rm -rf "${tmp}" "${old}"
-  mkdir -p "${tmp}" || { user_error "无法创建目录 ${tmp}"; return 1; }
-  if ! tar -xzf "${SERVER_TGZ}" -C "${tmp}" 2>>"${LOG_FILE}"; then
-    rm -rf "${tmp}"
-    user_error "解压应用文件失败（磁盘空间不足？），详见 ${LOG_FILE}"
+  if [ ! -w "${SERVER_DIR}/public" ] || [ ! -w "${SERVER_DIR}/.next" ]; then
+    user_error "应用目录不可写（${SERVER_DIR}），MoonTVPlus 启动时需要写入 public/manifest.json 与 .next/cache。"
     return 1
   fi
-  echo "${want}" > "${tmp}/.fpk-version"
-  [ -d "${SERVER_DIR}" ] && mv "${SERVER_DIR}" "${old}"
-  mv "${tmp}" "${SERVER_DIR}" || { user_error "替换应用文件失败"; return 1; }
-  rm -rf "${old}"
   return 0
 }
 
@@ -118,20 +131,17 @@ start_app() {
     user_error "端口 ${MOONTV_PORT} 已被其他程序占用，请释放该端口后再启动 MoonTVPlus。"
     return 1
   fi
-  if [ ! -x "${NODE}" ]; then
-    user_error "应用文件不完整（缺少内置 Node.js），请重新安装。"
-    return 1
-  fi
-  mkdir -p "${DATA_DIR}" "${LOG_DIR}" "${HOME_DIR}" || { user_error "无法创建数据目录 ${VAR_DIR}"; return 1; }
-  ensure_server || return 1
+  check_server || return 1
+  prepare_dirs || return 1
+  remove_legacy_server
 
   # 日志太大时截断，只留尾部
   if [ "$(stat -c %s "${LOG_FILE}" 2>/dev/null || echo 0)" -gt 10485760 ]; then
-    tail -c 2097152 "${LOG_FILE}" > "${LOG_FILE}.tmp" && mv -f "${LOG_FILE}.tmp" "${LOG_FILE}"
+    tail -c 2097152 "${LOG_FILE}" > "${LOG_FILE}.tmp" && mv -f "${LOG_FILE}.tmp" "${LOG_FILE}" && chmod 640 "${LOG_FILE}"
   fi
 
   cd "${SERVER_DIR}" || { user_error "无法进入 ${SERVER_DIR}"; return 1; }
-  # setsid：自成进程组，stop 时可以整组清理。$! 就是 node 本身（setsid 在已是组长以外时直接 exec）。
+  # setsid：自成进程组，stop 时可以整组清理。后台子进程不是组长，setsid 直接 exec，$! 就是 node 本身。
   env -i \
     PATH="${PATH}" HOME="${HOME_DIR}" LANG=C.UTF-8 TZ="${TZ:-Asia/Shanghai}" \
     NODE_ENV=production NEXT_TELEMETRY_DISABLED=1 \

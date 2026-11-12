@@ -1,5 +1,5 @@
 #!/bin/bash
-# 安装后：保存配置并解压应用本体。
+# 安装后：保存配置、建好数据目录并收紧权限。
 # 重装时保留旧配置里向导没有收集的值（cron 密码），向导里填的值覆盖旧值。
 . "$(dirname "$0")/functions"
 
@@ -23,7 +23,8 @@ fi
 
 save_settings "${port}" "${username}" "${password}" "${old_cron:-$(random_hex)}" \
   || { user_error "无法写入配置文件 ${SETTINGS_FILE}"; exit 1; }
-mkdir -p "${DATA_DIR}" "${LOG_DIR}" "${HOME_DIR}" || { user_error "无法创建数据目录 ${VAR_DIR}"; exit 1; }
-ensure_server || exit 1
+prepare_dirs || exit 1
+remove_legacy_server
+check_server || exit 1
 log "installed ${TRIM_APPVER:-} port=${port}"
 exit 0

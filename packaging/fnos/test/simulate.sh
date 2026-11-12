@@ -63,10 +63,12 @@ check "settings.env 权限 600" [ "$(stat -c %a "${T}/etc/settings.env")" = 600 
 check "特殊字符密码原样保存" [ "$(settings MOONTV_PASSWORD)" = 'pa$$w0rd"x' ]
 CRON1="$(settings MOONTV_CRON_PASSWORD)"
 check "生成了随机 cron 密码" [ "${#CRON1}" = 32 ]
-check "应用本体已解压到 var/server" [ -f "${T}/var/server/start.js" ]
-check "版本戳一致" [ "$(cat "${T}/var/server/.fpk-version")" = "$(cat "${T}/target/server.version")" ]
+check "应用本体在 target/server" [ -f "${T}/target/server/start.js" ]
+check "没有在 var 里解压拷贝" [ ! -e "${T}/var/server" ]
+check "data/logs/home 目录为 750" [ "$(stat -c %a "${T}/var/data" "${T}/var/logs" "${T}/var/home" | sort -u)" = 750 ]
 
 step "3. 启动 / 状态（main）"
+chmod 777 "${T}/var/logs"   # 模拟飞牛 ZFS 不受 umask 约束、建出宽权限目录
 run main status; check "未启动时 status=3" [ $? = 3 ]
 run main start
 check "start 成功" [ $? = 0 ]
@@ -79,7 +81,8 @@ check "Socket.IO 200" [ "$(http_code "http://127.0.0.1:${PORT}/socket.io/?EIO=4&
 check "站长账号能登录" [ "$(login admin 'pa$$w0rd"x')" = True ]
 check "错误密码登录失败" [ "$(login admin wrong)" != True ]
 check "SQLite 数据库建在 var/data" [ -s "${T}/var/data/moontv.db" ]
-check "manifest.json 在 var 里生成" [ -f "${T}/var/server/public/manifest.json" ]
+check "启动时收紧了 logs 权限" [ "$(stat -c %a "${T}/var/logs")" = 750 ]
+check "manifest.json 在 target/server 里生成" [ -f "${T}/target/server/public/manifest.json" ]
 code="$(http_code "http://127.0.0.1:${PORT}/api/cron/mtvpls")"
 check "默认 cron 密码 mtvpls 被拒绝（401，实际 ${code}）" [ "$code" = 401 ]
 # 202 = 已受理、后台执行；429 = start.js 启动后已自动触发过、处于冷却期。两者都说明密码通过了校验。
@@ -110,22 +113,32 @@ check "原因写进 TRIM_TEMP_LOGFILE" grep -q "已被其他程序占用" "$TEMP
 sed -i "s/^MOONTV_PORT=.*/MOONTV_PORT=${PORT}/" "${T}/etc/settings.env"
 
 step "7. 应用起不来时不能谎报成功"
-mv "${T}/var/server/start.js" "${T}/var/server/start.js.bak"
-echo 'process.exit(3)' > "${T}/var/server/start.js"
+mv "${T}/target/server/start.js" "${T}/target/server/start.js.bak"
+echo 'process.exit(3)' > "${T}/target/server/start.js"
 run main start; rc=$?
 check "进程立即退出时 start 返回失败" [ "$rc" != 0 ]
 check "并给出原因" grep -q "启动失败" "$TEMPLOG"
 check "失败后没有残留 pidfile" [ ! -e "${T}/var/logs/moontvplus.pid" ]
-mv -f "${T}/var/server/start.js.bak" "${T}/var/server/start.js"
+mv -f "${T}/target/server/start.js.bak" "${T}/target/server/start.js"
+
+step "7b. 应用目录不可写时启动失败并说明原因"
+chmod a-w "${T}/target/server/public"
+run main start; rc=$?
+check "start 返回失败" [ "$rc" != 0 ]
+check "原因写进 TRIM_TEMP_LOGFILE" grep -q "应用目录不可写" "$TEMPLOG"
+chmod u+w "${T}/target/server/public"
 
 step "8. 升级（upgrade_init / upgrade_callback）"
 run main start >/dev/null
 DB_INODE="$(stat -c %i "${T}/var/data/moontv.db")"
 run upgrade_init; check "upgrade_init 停止了服务" [ "$(run main status; echo $?)" = 3 ]
-echo "$(cat "${T}/target/server.version")-next" > "${T}/target/server.version"   # 模拟新版本
-touch "${T}/var/server/marker-old"
+mkdir -p "${T}/var/server/node_modules" "${T}/var/server.old"   # 模拟 227.0.1.1 留下的解压拷贝
+chmod 777 "${T}/var/data"; touch "${T}/var/data/loose"; chmod 666 "${T}/var/data/loose"
 run upgrade_callback; check "upgrade_callback 成功" [ $? = 0 ]
-check "按新版本重新解压" [ ! -e "${T}/var/server/marker-old" ]
+check "清掉了旧版的 var/server 拷贝" test ! -e "${T}/var/server" -a ! -e "${T}/var/server.old"
+check "升级时收紧权限：目录 750" [ "$(stat -c %a "${T}/var/data")" = 750 ]
+check "升级时收紧权限：文件 640" [ "$(stat -c %a "${T}/var/data/loose")" = 640 ]
+rm -f "${T}/var/data/loose"
 check "数据库没动" [ "$(stat -c %i "${T}/var/data/moontv.db")" = "$DB_INODE" ]
 run main start; check "升级后能启动" [ $? = 0 ]
 check "升级后旧账号数据仍可登录" [ "$(login admin newpass99)" = True ]
@@ -141,7 +154,7 @@ step "10. 卸载"
 run main start >/dev/null
 run uninstall_init; check "uninstall_init 停止了服务" [ "$(run main status; echo $?)" = 3 ]
 wizard_keep_data=true "${CMD}/uninstall_callback"
-check "保留数据：应用本体已删" [ ! -e "${T}/var/server" ]
+check "保留数据：var 里没有应用本体" [ ! -e "${T}/var/server" ]
 check "保留数据：数据库还在" [ -s "${T}/var/data/moontv.db" ]
 check "保留数据：配置还在" [ -f "${T}/etc/settings.env" ]
 wizard_keep_data=false "${CMD}/uninstall_callback"

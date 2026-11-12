@@ -1,5 +1,6 @@
 #!/bin/bash
-# 卸载后：应用本体总是删除；数据库与配置默认保留，向导里关闭「保留」才删除。
+# 卸载后：应用本体在 TRIM_APPDEST 里，由飞牛删除；这里只处理 TRIM_PKGVAR / TRIM_PKGETC。
+# 数据库与配置默认保留，向导里关闭「保留」才删除。
 # 只删本应用自己的目录（路径里必须带 moontvplus），防止变量异常时误删。
 . "$(dirname "$0")/functions"
 
@@ -10,9 +11,7 @@ safe_rm() {
   esac
 }
 
-safe_rm "${SERVER_DIR}"
-safe_rm "${VAR_DIR}/server.new"
-safe_rm "${VAR_DIR}/server.old"
+remove_legacy_server
 if [ "${wizard_keep_data:-true}" != "true" ]; then
   safe_rm "${DATA_DIR}"
   safe_rm "${HOME_DIR}"

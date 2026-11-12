@@ -23,13 +23,14 @@ x86 与 arm 各出一个包。这个目录只在 fork 的 `fnos-fpk` 分支上�
 
 | 位置 | 内容 |
 |---|---|
-| `TRIM_APPDEST`（只读） | `runtime/node`（node + 自带库）、`server.tar.gz`（应用本体）、`server.version` |
+| `TRIM_APPDEST`（`/vol1/@appcenter/moontvplus`） | `runtime/node`（node + 自带库）、`server/`（应用本体，直接在这里运行）。飞牛把它的属主设为应用账号，运行时写 `public/manifest.json` 和 `.next/cache` 没问题；不可写时启动会失败并说明原因 |
 | `TRIM_PKGETC/settings.env` | 端口、站长账号、cron 密码（权限 600） |
-| `TRIM_PKGVAR/server/` | 解压后的应用本体。应用运行时会写 `public/manifest.json` 和 `.next/cache`，所以不能直接在只读的 `TRIM_APPDEST` 里运行；安装/升级时按版本戳解压，版本相同就跳过 |
 | `TRIM_PKGVAR/data/` | SQLite 数据库 |
 | `TRIM_PKGVAR/logs/` | `moontvplus.log`（超过 10 MB 截断）、pid |
 
-卸载时应用本体总是删除；数据库与配置默认保留，卸载向导里关闭「保留」才删。
+飞牛的 ZFS（`trimacl` 挂载）新建文件不受 umask 约束，所以每次安装、升级、启动时都把 `data`、`logs`、`home` 收紧为目录 750、文件 640。
+
+卸载时应用本体随安装目录一起删除；数据库与配置默认保留，卸载向导里关闭「保留」才删。227.0.1.1 曾把应用本体解压到 `TRIM_PKGVAR/server`，之后的版本在安装、升级、启动时会自动清掉这份旧拷贝。
 
 ## 构建
 
@@ -51,7 +52,7 @@ packaging/fnos/build.sh --reuse-app    # 复用上次的 next build，只重新�
 packaging/fnos/test/simulate.sh packaging/fnos/dist/moontvplus_<版本>_x86.fpk
 ```
 
-在普通 x86 Linux 上用假的 `TRIM_*` 环境跑一遍全部生命周期脚本，包括失败路径：端口占用、进程启动即退出、改账号后重启、升级时重新解压且不动数据库、重装时保留 cron 密码、卸载时是否保留数据，以及删除路径的保护。arm 包在构建时只做静态检查（所有原生文件的架构），要在 arm 设备上实测。
+在普通 x86 Linux 上用假的 `TRIM_*` 环境跑一遍全部生命周期脚本，包括失败路径：端口占用、进程启动即退出、应用目录不可写、改账号后重启、权限收紧、升级时清理旧拷贝且不动数据库、重装时保留 cron 密码、卸载时是否保留数据，以及删除路径的保护。arm 包在构建时只做静态检查（所有原生文件的架构），要在 arm 设备上实测。
 
 ## 同步上游后
 
