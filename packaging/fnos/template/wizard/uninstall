@@ -1,0 +1,17 @@
+[
+  {
+    "stepTitle": "卸载选项",
+    "items": [
+      {
+        "type": "tips",
+        "helpText": "数据目录里保存着 SQLite 数据库：用户、播放记录、收藏、站点配置等。默认保留，重新安装后可以继续使用。"
+      },
+      {
+        "type": "switch",
+        "field": "wizard_keep_data",
+        "label": "保留数据库与站点配置",
+        "initValue": "true"
+      }
+    ]
+  }
+]

@@ -1,0 +1,42 @@
+[
+  {
+    "stepTitle": "MoonTVPlus 基础设置",
+    "items": [
+      {
+        "type": "tips",
+        "helpText": "MoonTVPlus 通过 NAS 的局域网地址和下面的端口访问，数据保存在应用自己的数据目录（SQLite）。这里设置的是站长（owner）账号，安装后可在「应用设置」中修改。"
+      },
+      {
+        "type": "text",
+        "field": "wizard_port",
+        "label": "服务端口",
+        "initValue": "3030",
+        "helpText": "1024-65535，安装后不可修改",
+        "rules": [
+          { "required": true, "message": "请输入端口" },
+          { "pattern": "^[0-9]{4,5}$", "message": "请输入 1024-65535 之间的端口" }
+        ]
+      },
+      {
+        "type": "text",
+        "field": "wizard_username",
+        "label": "站长用户名",
+        "initValue": "admin",
+        "rules": [
+          { "required": true, "message": "请输入用户名" },
+          { "pattern": "^\\S{1,32}$", "message": "用户名不能含空白字符，最长 32 位" }
+        ]
+      },
+      {
+        "type": "password",
+        "field": "wizard_password",
+        "label": "站长密码",
+        "initValue": "",
+        "rules": [
+          { "required": true, "message": "请输入密码" },
+          { "pattern": "^\\S{6,}$", "message": "密码至少 6 位且不含空白字符" }
+        ]
+      }
+    ]
+  }
+]

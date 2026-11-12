@@ -1,0 +1,5 @@
+#!/bin/bash
+# 升级前：停止服务，避免新旧文件交替时进程还在运行。
+. "$(dirname "$0")/functions"
+stop_app
+exit 0

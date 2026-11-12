@@ -1,0 +1,11 @@
+#!/bin/bash
+# 飞牛生命周期入口：start | stop | status
+. "$(dirname "$0")/functions"
+
+case "${1:-}" in
+  start)  start_app || exit 1 ;;
+  stop)   stop_app ;;
+  status) is_running && exit 0 || exit 3 ;;
+  *)      user_error "未知命令：${1:-}"; exit 1 ;;
+esac
+exit 0

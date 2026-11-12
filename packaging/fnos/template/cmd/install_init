@@ -1,0 +1,20 @@
+#!/bin/bash
+# 安装前检查：CPU 架构与端口。
+. "$(dirname "$0")/functions"
+
+case "$(uname -m)" in
+  x86_64|aarch64) ;;
+  *) user_error "不支持的 CPU 架构：$(uname -m)，仅支持 x86_64 与 aarch64。"; exit 1 ;;
+esac
+
+port="${wizard_port:-}"
+if ! valid_port "${port}"; then
+  user_error "端口无效：${port}，请输入 1024-65535 之间的端口。"
+  exit 1
+fi
+# 重装时本应用自己的旧进程不算占用（安装过程会先停掉它）
+if port_open "${port}" && ! is_running; then
+  user_error "端口 ${port} 已被其他程序占用（例如 Docker 版 MoonTV），请换一个端口或先停掉占用的程序。"
+  exit 1
+fi
+exit 0

@@ -1,0 +1,4 @@
+#!/bin/bash
+. "$(dirname "$0")/functions"
+stop_app
+exit 0

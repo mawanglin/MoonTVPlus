@@ -1,0 +1,21 @@
+#!/bin/bash
+# 卸载后：应用本体总是删除；数据库与配置默认保留，向导里关闭「保留」才删除。
+# 只删本应用自己的目录（路径里必须带 moontvplus），防止变量异常时误删。
+. "$(dirname "$0")/functions"
+
+safe_rm() {
+  case "$1" in
+    */moontvplus/*|*/moontvplus) rm -rf --one-file-system "$1" ;;
+    *) log "refuse to remove unexpected path: $1" ;;
+  esac
+}
+
+safe_rm "${SERVER_DIR}"
+safe_rm "${VAR_DIR}/server.new"
+safe_rm "${VAR_DIR}/server.old"
+if [ "${wizard_keep_data:-true}" != "true" ]; then
+  safe_rm "${DATA_DIR}"
+  safe_rm "${HOME_DIR}"
+  rm -f "${SETTINGS_FILE}"
+fi
+exit 0

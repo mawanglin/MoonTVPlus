@@ -1,0 +1,8 @@
+#!/bin/bash
+# 升级后：配置沿用，按新版本重新解压应用本体（数据库不在 server 目录里，不受影响）。
+. "$(dirname "$0")/functions"
+load_settings || exit 1
+mkdir -p "${DATA_DIR}" "${LOG_DIR}" "${HOME_DIR}"
+ensure_server || exit 1
+log "upgraded to ${TRIM_APPVER:-}"
+exit 0

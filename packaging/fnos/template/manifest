@@ -1,0 +1,23 @@
+appname=moontvplus
+version=@VERSION@
+display_name=MoonTVPlus
+desc=影视聚合播放器：多源搜索、在线播放、收藏与播放记录同步、弹幕、观影室、电视模式。原生运行，已内置 Node.js 运行时，使用 SQLite 存储，不依赖 Docker。
+source=thirdparty
+maintainer=MoonTVPlus 社区（上游）/ Cob（打包）
+maintainer_url=https://github.com/mtvpls/MoonTVPlus
+distributor=Cob
+distributor_url=https://github.com/mawanglin/MoonTVPlus
+platform=@PLATFORM@
+
+# 网页通过局域网端口访问（页面与接口都挂在根路径，不能放进飞牛统一网关的子路径）。
+# 端口由安装向导决定；占用检查由 cmd/install_init 与 cmd/main 给出可读的原因。
+checkport=false
+ctl_stop=true
+
+desktop_uidir=ui
+desktop_applaunchname=moontvplus.main
+
+# 不访问用户文件
+disable_authorization_path=true
+
+changelog=@CHANGELOG@

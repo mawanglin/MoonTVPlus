@@ -1,0 +1,180 @@
+#!/bin/bash
+# MoonTVPlus 飞牛包的共用函数，由其他 cmd 脚本 source。
+# 只依赖飞牛注入的 TRIM_* 变量。
+#
+# 目录约定：
+#   TRIM_APPDEST（只读）  runtime/node   内置 Node.js 及其 libstdc++ / libgcc_s
+#                         server.tar.gz  应用本体（Next standalone + 生产依赖）
+#                         server.version 应用本体的版本戳
+#   TRIM_PKGETC           settings.env   端口、站长账号、cron 密码（600）
+#   TRIM_PKGVAR           server/        解压后的应用本体（运行时会写 public/manifest.json 与 .next/cache，
+#                                        所以不能直接在 TRIM_APPDEST 里运行）
+#                         data/          SQLite 数据库
+#                         logs/          日志与 pid
+
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+umask 027
+
+APP_DIR="${TRIM_APPDEST:-/var/apps/${TRIM_APPNAME:-moontvplus}/target}"
+VAR_DIR="${TRIM_PKGVAR:-/var/apps/${TRIM_APPNAME:-moontvplus}/var}"
+ETC_DIR="${TRIM_PKGETC:-${VAR_DIR}/etc}"
+SETTINGS_FILE="${ETC_DIR}/settings.env"
+NODE="${APP_DIR}/runtime/node/bin/node"
+SERVER_TGZ="${APP_DIR}/server.tar.gz"
+SERVER_STAMP="${APP_DIR}/server.version"
+SERVER_DIR="${VAR_DIR}/server"
+DATA_DIR="${VAR_DIR}/data"
+LOG_DIR="${VAR_DIR}/logs"
+LOG_FILE="${LOG_DIR}/moontvplus.log"
+# pidfile 放在包用户自己的目录里（见 fnos-fpk 五类失败静默 #4）
+PID_FILE="${LOG_DIR}/moontvplus.pid"
+HOME_DIR="${VAR_DIR}/home"
+
+log() {
+  mkdir -p "${LOG_DIR}" 2>/dev/null
+  echo "$(date '+%F %T') [fnos] $*" >> "${LOG_FILE}" 2>/dev/null
+}
+
+# 失败原因写进 TRIM_TEMP_LOGFILE，应用中心才能显示出来（否则只显示「原因未知」）。
+# 注意 config_* 与 uninstall_* 阶段没有这个文件，只能看日志。
+user_error() {
+  log "ERROR: $*"
+  [ -n "${TRIM_TEMP_LOGFILE:-}" ] && echo "$*" >> "${TRIM_TEMP_LOGFILE}"
+  echo "$*" >&2
+}
+
+valid_port() {
+  [[ "$1" =~ ^[0-9]+$ ]] && [ "$1" -ge 1024 ] && [ "$1" -le 65535 ]
+}
+
+port_open() {
+  (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null
+}
+
+# 读取配置。先清空同名变量，避免沿用调用方环境里的旧值。
+load_settings() {
+  unset MOONTV_PORT MOONTV_USERNAME MOONTV_PASSWORD MOONTV_CRON_PASSWORD
+  # shellcheck disable=SC1090
+  [ -f "${SETTINGS_FILE}" ] && . "${SETTINGS_FILE}"
+  if ! valid_port "${MOONTV_PORT:-}" || [ -z "${MOONTV_USERNAME:-}" ] || [ -z "${MOONTV_PASSWORD:-}" ] \
+     || [ -z "${MOONTV_CRON_PASSWORD:-}" ]; then
+    user_error "MoonTVPlus 配置缺失或无效（${SETTINGS_FILE}），请重新安装应用。"
+    return 1
+  fi
+}
+
+save_settings() {  # port username password cron_password
+  local tmp="${SETTINGS_FILE}.tmp"
+  mkdir -p "${ETC_DIR}" || return 1
+  ( umask 077
+    printf 'MOONTV_PORT=%q\nMOONTV_USERNAME=%q\nMOONTV_PASSWORD=%q\nMOONTV_CRON_PASSWORD=%q\n' \
+      "$1" "$2" "$3" "$4" > "${tmp}" ) || return 1
+  chmod 600 "${tmp}" && mv -f "${tmp}" "${SETTINGS_FILE}"
+}
+
+random_hex() {
+  od -An -N16 -tx1 /dev/urandom | tr -d ' \n'
+}
+
+# 把只读的 server.tar.gz 解压到 TRIM_PKGVAR/server。版本戳一致时跳过。
+# 先解压到临时目录再整体替换，解压失败不会破坏正在用的版本。
+ensure_server() {
+  local want have tmp="${VAR_DIR}/server.new" old="${VAR_DIR}/server.old"
+  want="$(cat "${SERVER_STAMP}" 2>/dev/null)"
+  if [ -z "${want}" ] || [ ! -f "${SERVER_TGZ}" ]; then
+    user_error "应用文件不完整（缺少 server.tar.gz），请重新安装。"
+    return 1
+  fi
+  have="$(cat "${SERVER_DIR}/.fpk-version" 2>/dev/null)"
+  [ "${have}" = "${want}" ] && [ -f "${SERVER_DIR}/start.js" ] && return 0
+
+  log "extracting server ${want} (was: ${have:-none})"
+  rm -rf "${tmp}" "${old}"
+  mkdir -p "${tmp}" || { user_error "无法创建目录 ${tmp}"; return 1; }
+  if ! tar -xzf "${SERVER_TGZ}" -C "${tmp}" 2>>"${LOG_FILE}"; then
+    rm -rf "${tmp}"
+    user_error "解压应用文件失败（磁盘空间不足？），详见 ${LOG_FILE}"
+    return 1
+  fi
+  echo "${want}" > "${tmp}/.fpk-version"
+  [ -d "${SERVER_DIR}" ] && mv "${SERVER_DIR}" "${old}"
+  mv "${tmp}" "${SERVER_DIR}" || { user_error "替换应用文件失败"; return 1; }
+  rm -rf "${old}"
+  return 0
+}
+
+is_running() {
+  local pid
+  [ -f "${PID_FILE}" ] || return 1
+  pid="$(head -n 1 "${PID_FILE}" | tr -d '[:space:]')"
+  [ -n "${pid}" ] && kill -0 "${pid}" 2>/dev/null
+}
+
+start_app() {
+  local pid
+  is_running && return 0
+  load_settings || return 1
+  if port_open "${MOONTV_PORT}"; then
+    user_error "端口 ${MOONTV_PORT} 已被其他程序占用，请释放该端口后再启动 MoonTVPlus。"
+    return 1
+  fi
+  if [ ! -x "${NODE}" ]; then
+    user_error "应用文件不完整（缺少内置 Node.js），请重新安装。"
+    return 1
+  fi
+  mkdir -p "${DATA_DIR}" "${LOG_DIR}" "${HOME_DIR}" || { user_error "无法创建数据目录 ${VAR_DIR}"; return 1; }
+  ensure_server || return 1
+
+  # 日志太大时截断，只留尾部
+  if [ "$(stat -c %s "${LOG_FILE}" 2>/dev/null || echo 0)" -gt 10485760 ]; then
+    tail -c 2097152 "${LOG_FILE}" > "${LOG_FILE}.tmp" && mv -f "${LOG_FILE}.tmp" "${LOG_FILE}"
+  fi
+
+  cd "${SERVER_DIR}" || { user_error "无法进入 ${SERVER_DIR}"; return 1; }
+  # setsid：自成进程组，stop 时可以整组清理。$! 就是 node 本身（setsid 在已是组长以外时直接 exec）。
+  env -i \
+    PATH="${PATH}" HOME="${HOME_DIR}" LANG=C.UTF-8 TZ="${TZ:-Asia/Shanghai}" \
+    NODE_ENV=production NEXT_TELEMETRY_DISABLED=1 \
+    HOSTNAME=0.0.0.0 PORT="${MOONTV_PORT}" \
+    USERNAME="${MOONTV_USERNAME}" PASSWORD="${MOONTV_PASSWORD}" \
+    NEXT_PUBLIC_STORAGE_TYPE=d1 SQLITE_DB_PATH="${DATA_DIR}/moontv.db" \
+    CRON_PASSWORD="${MOONTV_CRON_PASSWORD}" \
+    OFFLINE_DOWNLOAD_DIR="${DATA_DIR}/offline-download" \
+    setsid "${NODE}" start.js >> "${LOG_FILE}" 2>&1 < /dev/null &
+  pid=$!
+  echo "${pid}" > "${PID_FILE}"
+  log "started pid=${pid} port=${MOONTV_PORT}"
+
+  # 首次启动要建库、执行迁移；进程中途退出要如实报告失败，不能谎报已启动。
+  for _ in $(seq 1 90); do
+    if ! kill -0 "${pid}" 2>/dev/null; then
+      rm -f "${PID_FILE}"
+      user_error "MoonTVPlus 启动失败：$(tail -n 5 "${LOG_FILE}" 2>/dev/null | tr '\n' ' ')"
+      return 1
+    fi
+    port_open "${MOONTV_PORT}" && return 0
+    sleep 1
+  done
+  log "port ${MOONTV_PORT} not ready after 90s; server is still starting"
+  return 0
+}
+
+stop_app() {
+  local pid
+  if ! is_running; then
+    rm -f "${PID_FILE}"
+    return 0
+  fi
+  pid="$(head -n 1 "${PID_FILE}" | tr -d '[:space:]')"
+  kill -TERM -- "-${pid}" 2>/dev/null || kill -TERM "${pid}" 2>/dev/null
+  for _ in $(seq 1 30); do
+    kill -0 "${pid}" 2>/dev/null || break
+    sleep 1
+  done
+  if kill -0 "${pid}" 2>/dev/null; then
+    log "pid ${pid} did not exit within 30s, killing process group"
+    kill -KILL -- "-${pid}" 2>/dev/null || kill -KILL "${pid}" 2>/dev/null
+  fi
+  rm -f "${PID_FILE}"
+  log "stopped pid=${pid}"
+}

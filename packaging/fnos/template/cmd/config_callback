@@ -1,0 +1,17 @@
+#!/bin/bash
+# 应用设置保存后：更新站长账号，留空的项保持不变；正在运行就重启使其生效。
+# 注意：config_* 阶段没有 TRIM_TEMP_LOGFILE，错误只能写日志。
+. "$(dirname "$0")/functions"
+
+load_settings || exit 1
+if [ -z "${wizard_username:-}" ] && [ -z "${wizard_password:-}" ]; then
+  exit 0
+fi
+save_settings "${MOONTV_PORT}" "${wizard_username:-${MOONTV_USERNAME}}" \
+  "${wizard_password:-${MOONTV_PASSWORD}}" "${MOONTV_CRON_PASSWORD}" || { log "ERROR: 写入配置失败"; exit 1; }
+log "owner account updated"
+if is_running; then
+  stop_app
+  start_app || exit 1
+fi
+exit 0

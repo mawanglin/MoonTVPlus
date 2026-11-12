@@ -1,0 +1,14 @@
+{
+  ".url": {
+    "moontvplus.main": {
+      "title": "MoonTVPlus",
+      "desc": "影视聚合播放器",
+      "icon": "images/icon_{0}.png",
+      "type": "url",
+      "protocol": "http",
+      "port": "${wizard_port}",
+      "url": "/",
+      "allUsers": true
+    }
+  }
+}
